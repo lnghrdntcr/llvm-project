@@ -970,6 +970,82 @@ let TargetPrefix = "aarch64" in {
   // Sizes are chosen to correspond to the llvm.memset intrinsic: ptr, i8, i64
   def int_aarch64_mops_memset_tag : DefaultAttrsIntrinsic<[llvm_ptr_ty], [llvm_ptr_ty, llvm_i8_ty, llvm_i64_ty],
       [IntrWriteMem, IntrArgMemOnly, NoCapture<ArgIndex<0>>, WriteOnly<ArgIndex<0>>]>;
+  // memcpy(dest, src, len)
+  def int_aarch64_mops_memcpy
+      : DefaultAttrsIntrinsic<
+          [llvm_ptr_ty],
+          [llvm_ptr_ty, llvm_ptr_ty, llvm_i64_ty],
+          [
+            IntrArgMemOnly,
+            NoCapture<ArgIndex<0>>,
+            NoCapture<ArgIndex<1>>,
+            WriteOnly<ArgIndex<0>>,
+            ReadOnly<ArgIndex<1>>
+          ]
+        >;
+
+  // memcpy_nt(dest, src, len)
+  def int_aarch64_mops_memcpy_nt
+      : DefaultAttrsIntrinsic<
+          [],
+          [llvm_ptr_ty, llvm_ptr_ty, llvm_i64_ty],
+          [
+            IntrArgMemOnly,
+            NoCapture<ArgIndex<0>>,
+            NoCapture<ArgIndex<1>>,
+            WriteOnly<ArgIndex<0>>,
+            ReadOnly<ArgIndex<1>>
+          ]
+        >;
+
+  // memset(dest, value, len)
+  def int_aarch64_mops_memset
+      : DefaultAttrsIntrinsic<
+          [],
+          [llvm_ptr_ty, llvm_i64_ty, llvm_i64_ty],
+          [
+            IntrWriteMem,
+            IntrArgMemOnly,
+            NoCapture<ArgIndex<0>>,
+            WriteOnly<ArgIndex<0>>
+          ]
+        >;
+
+  // memset_nt(dest, value, len)
+  def int_aarch64_mops_memset_nt
+      : DefaultAttrsIntrinsic<
+          [],
+          [llvm_ptr_ty, llvm_i64_ty, llvm_i64_ty],
+          [
+            IntrWriteMem,
+            IntrArgMemOnly,
+            NoCapture<ArgIndex<0>>,
+            WriteOnly<ArgIndex<0>>
+          ]
+        >;
+
+  // memmove(dest, src, len)
+  def int_aarch64_mops_memmove
+      : DefaultAttrsIntrinsic<
+          [],
+          [llvm_ptr_ty, llvm_ptr_ty, llvm_i64_ty],
+          [
+            IntrArgMemOnly,
+            NoCapture<ArgIndex<0>>,
+            NoCapture<ArgIndex<1>>
+          ]
+        >;
+
+  def int_aarch64_mops_memmove_nt
+      : DefaultAttrsIntrinsic<
+          [],
+          [llvm_ptr_ty, llvm_ptr_ty, llvm_i64_ty],
+          [
+            IntrArgMemOnly,
+            NoCapture<ArgIndex<0>>,
+            NoCapture<ArgIndex<1>>
+          ]
+        >;
 }
 
 // Transactional Memory Extension (TME) Intrinsics
