@@ -10425,6 +10425,7 @@ let Predicates = [HasLS64] in {
   def : ST64BPattern<int_aarch64_st64bv0, ST64BV0>;
 }
 
+
 let Predicates = [HasMOPS] in {
   let Defs = [NZCV] in {
     defm CPYFP : MOPSMemoryCopyInsns<0b00, "cpyfp">;
@@ -10477,6 +10478,46 @@ let Predicates = [HasMOPS, HasMTE], Defs = [NZCV], Size = 12, mayLoad = 0, maySt
                                           [], "$Rd = $Rd_wb,$Rn = $Rn_wb">, Sched<[]>;
 }
 
+let Predicates = [HasMOPS], Defs = [NZCV], Size = 12, mayStore = 1, mayLoad = 1 in {
+  def MOPSMemoryCopyNTPseudo : Pseudo<(outs GPR64common:$Rd_wb, GPR64common:$Rs_wb, GPR64:$Rn_wb),
+                                      (ins GPR64common:$Rd, GPR64common:$Rs, GPR64:$Rn),
+                                      [], "$Rd = $Rd_wb,$Rs = $Rs_wb,$Rn = $Rn_wb">, Sched<[]>;
+  
+  def MOPSMemoryMoveNTPseudo : Pseudo<(outs GPR64common:$Rd_wb, GPR64common:$Rs_wb, GPR64:$Rn_wb),
+                                      (ins GPR64common:$Rd, GPR64common:$Rs, GPR64:$Rn),
+                                      [], "$Rd = $Rd_wb,$Rs = $Rs_wb,$Rn = $Rn_wb">, Sched<[]>;
+}
+
+let Predicates = [HasMOPS], Defs = [NZCV], Size = 12, mayStore = 1, mayLoad = 0 in {
+  def MOPSMemorySetNTPseudo  : Pseudo<(outs GPR64common:$Rd_wb, GPR64:$Rn_wb),
+                                      (ins GPR64common:$Rd, GPR64:$Rn, GPR64:$Rm),
+                                      [], "$Rd = $Rd_wb,$Rn = $Rn_wb,@earlyclobber $Rn_wb">, Sched<[]>;
+}
+let Predicates = [HasMOPS] in {
+  // Pattern for memcpy intrinsic
+  def : Pat<(int_aarch64_mops_memcpy GPR64common:$dst, GPR64common:$src, GPR64:$size),
+            (MOPSMemoryCopyPseudo $dst, $src, $size)>;
+  
+  // Pattern for non-temporal memcpy
+  def : Pat<(int_aarch64_mops_memcpy_nt GPR64common:$dst, GPR64common:$src, GPR64:$size),
+            (MOPSMemoryCopyNTPseudo $dst, $src, $size)>;
+  
+  // Pattern for memmove intrinsic
+  def : Pat<(int_aarch64_mops_memmove GPR64common:$dst, GPR64common:$src, GPR64:$size),
+            (MOPSMemoryMovePseudo $dst, $src, $size)>;
+  
+  // Pattern for non-temporal memmove
+  def : Pat<(int_aarch64_mops_memmove_nt GPR64common:$dst, GPR64common:$src, GPR64:$size),
+            (MOPSMemoryMoveNTPseudo $dst, $src, $size)>;
+  
+  // Pattern for memset
+  def : Pat<(int_aarch64_mops_memset GPR64common:$dst, GPR64:$val, GPR64:$size),
+            (MOPSMemorySetPseudo $dst, $size, $val)>;
+  
+  // Pattern for non-temporal memset
+  def : Pat<(int_aarch64_mops_memset_nt GPR64common:$dst, GPR64:$val, GPR64:$size),
+            (MOPSMemorySetNTPseudo $dst, $size, $val)>;
+}
 //-----------------------------------------------------------------------------
 // v8.3 Pointer Authentication late patterns
 
