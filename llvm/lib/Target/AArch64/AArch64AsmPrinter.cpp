@@ -1629,16 +1629,23 @@ void AArch64AsmPrinter::LowerMOPS(llvm::MCStreamer &OutStreamer,
   const auto Ops = [Opcode]() -> std::array<unsigned, 3> {
     if (Opcode == AArch64::MOPSMemoryCopyPseudo)
       return {AArch64::CPYFP, AArch64::CPYFM, AArch64::CPYFE};
+    if (Opcode == AArch64::MOPSMemoryCopyNTPseudo)
+      return {AArch64::CPYPRN, AArch64::CPYMRN, AArch64::CPYERN};
     if (Opcode == AArch64::MOPSMemoryMovePseudo)
       return {AArch64::CPYP, AArch64::CPYM, AArch64::CPYE};
+    if (Opcode == AArch64::MOPSMemoryMoveNTPseudo)
+      return {AArch64::CPYPRN, AArch64::CPYMRN, AArch64::CPYERN};
     if (Opcode == AArch64::MOPSMemorySetPseudo)
       return {AArch64::SETP, AArch64::SETM, AArch64::SETE};
+    if (Opcode == AArch64::MOPSMemorySetNTPseudo)  
+      return {AArch64::SETPN, AArch64::SETMN, AArch64::SETEN};
     if (Opcode == AArch64::MOPSMemorySetTaggingPseudo)
       return {AArch64::SETGP, AArch64::SETGM, AArch64::MOPSSETGE};
     llvm_unreachable("Unhandled memory operation pseudo");
   }();
   const bool IsSet = Opcode == AArch64::MOPSMemorySetPseudo ||
-                     Opcode == AArch64::MOPSMemorySetTaggingPseudo;
+                     Opcode == AArch64::MOPSMemorySetTaggingPseudo ||
+                     Opcode == AArch64::MOPSMemorySetNTPseudo;
 
   for (auto Op : Ops) {
     int i = 0;
@@ -3142,8 +3149,11 @@ void AArch64AsmPrinter::emitInstruction(const MachineInstr *MI) {
     return;
 
   case AArch64::MOPSMemoryCopyPseudo:
+  case AArch64::MOPSMemoryCopyNTPseudo:
   case AArch64::MOPSMemoryMovePseudo:
+  case AArch64::MOPSMemoryMoveNTPseudo:
   case AArch64::MOPSMemorySetPseudo:
+  case AArch64::MOPSMemorySetNTPseudo:
   case AArch64::MOPSMemorySetTaggingPseudo:
     LowerMOPS(*OutStreamer, *MI);
     return;
