@@ -973,7 +973,7 @@ let TargetPrefix = "aarch64" in {
   // memcpy(dest, src, len)
   def int_aarch64_mops_memcpy
       : DefaultAttrsIntrinsic<
-          [llvm_ptr_ty],
+          [],
           [llvm_ptr_ty, llvm_ptr_ty, llvm_i64_ty],
           [
             IntrArgMemOnly,
