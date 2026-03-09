@@ -965,9 +965,84 @@ def int_aarch64_stgp  : DefaultAttrsIntrinsic<[], [llvm_ptr_ty, llvm_i64_ty, llv
 }
 
 //===----------------------------------------------------------------------===//
-// Memory Operations (MOPS) Intrinsics
 let TargetPrefix = "aarch64" in {
   // Sizes are chosen to correspond to the llvm.memset intrinsic: ptr, i8, i64
+  // Data Movement ops SVE2 Intrinsics
+  def int_aarch64_sve2_memcpy
+      : DefaultAttrsIntrinsic<
+          [],
+          [llvm_ptr_ty, llvm_ptr_ty, llvm_i64_ty],
+          [
+            IntrArgMemOnly,
+            NoCapture<ArgIndex<0>>,
+            NoCapture<ArgIndex<1>>,
+            WriteOnly<ArgIndex<0>>,
+            ReadOnly<ArgIndex<1>>
+          ]
+        >;
+  def int_aarch64_sve2_memcpy_nt
+      : DefaultAttrsIntrinsic<
+          [],
+          [llvm_ptr_ty, llvm_ptr_ty, llvm_i64_ty],
+          [
+            IntrArgMemOnly,
+            NoCapture<ArgIndex<0>>,
+            NoCapture<ArgIndex<1>>,
+            WriteOnly<ArgIndex<0>>,
+            ReadOnly<ArgIndex<1>>
+          ]
+        >;
+
+  def int_aarch64_sve2_memmove
+      : DefaultAttrsIntrinsic<
+          [],
+          [llvm_ptr_ty, llvm_ptr_ty, llvm_i64_ty],
+          [
+            IntrArgMemOnly,
+            NoCapture<ArgIndex<0>>,
+            NoCapture<ArgIndex<1>>,
+            WriteOnly<ArgIndex<0>>,
+            ReadOnly<ArgIndex<1>>
+          ]
+        >;
+
+  def int_aarch64_sve2_memmove_nt
+      : DefaultAttrsIntrinsic<
+          [],
+          [llvm_ptr_ty, llvm_ptr_ty, llvm_i64_ty],
+          [
+            IntrArgMemOnly,
+            NoCapture<ArgIndex<0>>,
+            NoCapture<ArgIndex<1>>,
+            WriteOnly<ArgIndex<0>>,
+            ReadOnly<ArgIndex<1>>
+          ]
+        >;
+  def int_aarch64_sve2_memset
+      : DefaultAttrsIntrinsic<
+          [],
+          [llvm_ptr_ty, llvm_i64_ty, llvm_i64_ty],
+          [
+            IntrWriteMem,
+            IntrArgMemOnly,
+            NoCapture<ArgIndex<0>>,
+            WriteOnly<ArgIndex<0>>
+          ]
+        >;
+
+  def int_aarch64_sve2_memset_nt
+      : DefaultAttrsIntrinsic<
+          [],
+          [llvm_ptr_ty, llvm_i64_ty, llvm_i64_ty],
+          [
+            IntrWriteMem,
+            IntrArgMemOnly,
+            NoCapture<ArgIndex<0>>,
+            WriteOnly<ArgIndex<0>>
+          ]
+        >;
+
+  // Data Movement ops MOPS Intrinsics
   def int_aarch64_mops_memset_tag : DefaultAttrsIntrinsic<[llvm_ptr_ty], [llvm_ptr_ty, llvm_i8_ty, llvm_i64_ty],
       [IntrWriteMem, IntrArgMemOnly, NoCapture<ArgIndex<0>>, WriteOnly<ArgIndex<0>>]>;
   // memcpy(dest, src, len)

@@ -10472,11 +10472,6 @@ let Predicates = [HasMOPS], Defs = [NZCV], Size = 12, mayStore = 1 in {
                                       [], "$Rd = $Rd_wb,$Rn = $Rn_wb,@earlyclobber $Rn_wb">, Sched<[]>;
   }
 }
-let Predicates = [HasMOPS, HasMTE], Defs = [NZCV], Size = 12, mayLoad = 0, mayStore = 1 in {
-  def MOPSMemorySetTaggingPseudo : Pseudo<(outs GPR64common:$Rd_wb, GPR64:$Rn_wb),
-                                          (ins GPR64common:$Rd, GPR64:$Rn, GPR64:$Rm),
-                                          [], "$Rd = $Rd_wb,$Rn = $Rn_wb">, Sched<[]>;
-}
 
 let Predicates = [HasMOPS], Defs = [NZCV], Size = 12, mayStore = 1, mayLoad = 1 in {
   def MOPSMemoryCopyNTPseudo : Pseudo<(outs GPR64common:$Rd_wb, GPR64common:$Rs_wb, GPR64:$Rn_wb),
@@ -10492,6 +10487,12 @@ let Predicates = [HasMOPS], Defs = [NZCV], Size = 12, mayStore = 1, mayLoad = 0 
   def MOPSMemorySetNTPseudo  : Pseudo<(outs GPR64common:$Rd_wb, GPR64:$Rn_wb),
                                       (ins GPR64common:$Rd, GPR64:$Rn, GPR64:$Rm),
                                       [], "$Rd = $Rd_wb,$Rn = $Rn_wb,@earlyclobber $Rn_wb">, Sched<[]>;
+}
+
+let Predicates = [HasMOPS, HasMTE], Defs = [NZCV], Size = 12, mayLoad = 0, mayStore = 1 in {
+  def MOPSMemorySetTaggingPseudo : Pseudo<(outs GPR64common:$Rd_wb, GPR64:$Rn_wb),
+                                          (ins GPR64common:$Rd, GPR64:$Rn, GPR64:$Rm),
+                                          [], "$Rd = $Rd_wb,$Rn = $Rn_wb">, Sched<[]>;
 }
 let Predicates = [HasMOPS] in {
   // Pattern for memcpy intrinsic
@@ -10517,6 +10518,56 @@ let Predicates = [HasMOPS] in {
   // Pattern for non-temporal memset
   def : Pat<(int_aarch64_mops_memset_nt GPR64common:$dst, GPR64:$val, GPR64:$size),
             (MOPSMemorySetNTPseudo $dst, $size, $val)>;
+}
+let Predicates = [HasSVE2], Defs = [NZCV], Size = 12, mayStore = 1 in {
+  let mayLoad = 1 in {
+    def SVE2MemoryCopyPseudo : Pseudo<(outs GPR64common:$Rd_wb, GPR64common:$Rs_wb, GPR64:$Rn_wb),
+                                      (ins GPR64common:$Rd, GPR64common:$Rs, GPR64:$Rn),
+                                      [], "$Rd = $Rd_wb,$Rs = $Rs_wb,$Rn = $Rn_wb">, Sched<[]>;
+    def SVE2MemoryMovePseudo : Pseudo<(outs GPR64common:$Rd_wb, GPR64common:$Rs_wb, GPR64:$Rn_wb),
+                                      (ins GPR64common:$Rd, GPR64common:$Rs, GPR64:$Rn),
+                                      [], "$Rd = $Rd_wb,$Rs = $Rs_wb,$Rn = $Rn_wb">, Sched<[]>;
+    def SVE2MemoryCopyNTPseudo : Pseudo<(outs GPR64common:$Rd_wb, GPR64common:$Rs_wb, GPR64:$Rn_wb),
+                                      (ins GPR64common:$Rd, GPR64common:$Rs, GPR64:$Rn),
+                                      [], "$Rd = $Rd_wb,$Rs = $Rs_wb,$Rn = $Rn_wb">, Sched<[]>;
+    def SVE2MemoryMoveNTPseudo : Pseudo<(outs GPR64common:$Rd_wb, GPR64common:$Rs_wb, GPR64:$Rn_wb),
+                                      (ins GPR64common:$Rd, GPR64common:$Rs, GPR64:$Rn),
+                                      [], "$Rd = $Rd_wb,$Rs = $Rs_wb,$Rn = $Rn_wb">, Sched<[]>;
+  }
+  let mayLoad = 0 in {
+    def SVE2MemorySetPseudo  : Pseudo<(outs GPR64common:$Rd_wb, GPR64:$Rn_wb),
+                                      (ins GPR64common:$Rd, GPR64:$Rn, GPR64:$Rm),
+                                      [], "$Rd = $Rd_wb,$Rn = $Rn_wb,@earlyclobber $Rn_wb">, Sched<[]>;
+    def SVE2MemorySetNTPseudo  : Pseudo<(outs GPR64common:$Rd_wb, GPR64:$Rn_wb),
+                                      (ins GPR64common:$Rd, GPR64:$Rn, GPR64:$Rm),
+                                      [], "$Rd = $Rd_wb,$Rn = $Rn_wb,@earlyclobber $Rn_wb">, Sched<[]>;
+  }
+}
+
+let Predicates = [HasSVE2] in {
+  // Pattern for memcpy intrinsic
+  def : Pat<(int_aarch64_sve2_memcpy GPR64common:$dst, GPR64common:$src, GPR64:$size),
+            (SVE2MemoryCopyPseudo $dst, $src, $size)>;
+  
+  // Pattern for non-temporal memcpy
+  def : Pat<(int_aarch64_sve2_memcpy_nt GPR64common:$dst, GPR64common:$src, GPR64:$size),
+            (SVE2MemoryCopyNTPseudo $dst, $src, $size)>;
+  
+  // Pattern for memmove intrinsic
+  def : Pat<(int_aarch64_sve2_memmove GPR64common:$dst, GPR64common:$src, GPR64:$size),
+            (SVE2MemoryMovePseudo $dst, $src, $size)>;
+  
+  // Pattern for non-temporal memmove
+  def : Pat<(int_aarch64_sve2_memmove_nt GPR64common:$dst, GPR64common:$src, GPR64:$size),
+            (SVE2MemoryMoveNTPseudo $dst, $src, $size)>;
+  
+  // Pattern for memset
+  def : Pat<(int_aarch64_sve2_memset GPR64common:$dst, GPR64:$val, GPR64:$size),
+            (SVE2MemorySetPseudo $dst, $size, $val)>;
+  
+  // Pattern for non-temporal memset
+  def : Pat<(int_aarch64_sve2_memset_nt GPR64common:$dst, GPR64:$val, GPR64:$size),
+            (SVE2MemorySetNTPseudo $dst, $size, $val)>;
 }
 //-----------------------------------------------------------------------------
 // v8.3 Pointer Authentication late patterns

@@ -87,6 +87,10 @@ private:
   bool expandSVESpillFill(MachineBasicBlock &MBB,
                           MachineBasicBlock::iterator MBBI, unsigned Opc,
                           unsigned N);
+  bool expandMOPSSVE2Compat(MachineBasicBlock& MBB, 
+                            MachineBasicBlock::iterator MBBI, 
+                            MachineBasicBlock::iterator& NextMBBI);
+
   bool expandCALL_RVMARKER(MachineBasicBlock &MBB,
                            MachineBasicBlock::iterator MBBI);
   bool expandCALL_BTI(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI);
@@ -118,6 +122,119 @@ static void transferImpOps(MachineInstr &OldMI, MachineInstrBuilder &UseMI,
     else
       DefMI.add(MO);
   }
+}
+bool AArch64ExpandPseudo::expandMOPSSVE2Compat(MachineBasicBlock &MBB,
+                                               MachineBasicBlock::iterator MBBI,
+                                               MachineBasicBlock::iterator &NextMBBI) {
+  MachineInstr &MI = *MBBI;
+  unsigned Opcode = MI.getOpcode();
+  DebugLoc DL = MI.getDebugLoc();
+
+  MachineFunction &MF = *MBB.getParent();
+  const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+
+  bool IsNonTemporal =
+      (Opcode == AArch64::SVE2MemoryCopyNTPseudo ||
+       Opcode == AArch64::SVE2MemoryMoveNTPseudo);
+
+  Register DstReg = MI.getOperand(0).getReg();
+  Register SrcReg = MI.getOperand(1).getReg();
+  Register SizeReg = MI.getOperand(2).getReg();
+
+  Register PredReg = AArch64::P0;
+  Register VecReg  = AArch64::Z0;
+
+  MachineBasicBlock *LoopBB = MF.CreateMachineBasicBlock(MBB.getBasicBlock());
+  MachineBasicBlock *ExitBB = MF.CreateMachineBasicBlock(MBB.getBasicBlock());
+
+  MF.insert(++MBB.getIterator(), LoopBB);
+  MF.insert(++LoopBB->getIterator(), ExitBB);
+
+  ExitBB->splice(ExitBB->end(), &MBB, std::next(MBBI), MBB.end());
+  ExitBB->transferSuccessors(&MBB);
+
+  MBB.addSuccessor(LoopBB);
+
+  LoopBB->addSuccessor(LoopBB);
+  LoopBB->addSuccessor(ExitBB);
+
+  LoopBB->addLiveIn(AArch64::P0);
+  LoopBB->addLiveIn(AArch64::Z0);
+  // ---- Loop start ----
+
+  // Generate predicate for remaining bytes
+  BuildMI(LoopBB, DL, TII->get(AArch64::WHILELO_PXX_B), PredReg)
+      .addReg(AArch64::XZR)
+      .addReg(SizeReg);
+
+  if (IsNonTemporal) {
+    BuildMI(LoopBB, DL, TII->get(AArch64::LDNT1B_ZRI))
+        .addReg(VecReg, RegState::Define)
+        .addReg(PredReg)
+        .addReg(SrcReg)
+        .addImm(0);
+
+    BuildMI(LoopBB, DL, TII->get(AArch64::STNT1B_ZRI))
+        .addReg(VecReg)
+        .addReg(PredReg, RegState::Kill)
+        .addReg(DstReg)
+        .addImm(0);
+
+  } else {
+
+    BuildMI(LoopBB, DL, TII->get(AArch64::LD1B_IMM))
+        .addReg(VecReg, RegState::Define)
+        .addReg(PredReg)
+        .addReg(SrcReg)
+        .addImm(0);
+
+    BuildMI(LoopBB, DL, TII->get(AArch64::ST1B_IMM))
+        .addReg(VecReg)
+        .addReg(PredReg, RegState::Kill)
+        .addReg(DstReg)
+        .addImm(0);
+  }
+
+  BuildMI(LoopBB, DL, TII->get(AArch64::INCB_XPiI), SrcReg)
+    .addReg(SrcReg)
+    .addImm(AArch64SVEPredPattern::vl1)
+    .addImm(0);
+
+  BuildMI(LoopBB, DL, TII->get(AArch64::INCB_XPiI), DstReg)
+    .addReg(DstReg)
+    .addImm(AArch64SVEPredPattern::vl1)
+    .addImm(0);
+
+  BuildMI(LoopBB, DL, TII->get(AArch64::DECB_XPiI), SizeReg)
+    .addReg(SizeReg)
+    .addImm(AArch64SVEPredPattern::vl1)
+    .addImm(0);
+
+  // Compare size > 0
+  BuildMI(LoopBB, DL, TII->get(AArch64::SUBSXri), AArch64::XZR)
+      .addReg(SizeReg)
+      .addImm(0)
+      .addImm(0);
+
+  // Loop if more bytes remain
+  BuildMI(LoopBB, DL, TII->get(AArch64::Bcc))
+      .addImm(AArch64CC::GT)
+      .addMBB(LoopBB)
+      .addReg(AArch64::NZCV, RegState::Implicit | RegState::Kill);
+
+  // Exit
+  BuildMI(LoopBB, DL, TII->get(AArch64::B)).addMBB(ExitBB);
+
+  // ---- finalize ----
+
+  NextMBBI = MBB.end();
+  MI.eraseFromParent();
+
+  LivePhysRegs LiveRegs;
+  computeAndAddLiveIns(LiveRegs, *LoopBB);
+  computeAndAddLiveIns(LiveRegs, *ExitBB);
+
+  return true;
 }
 
 /// Expand a MOVi32imm or MOVi64imm pseudo instruction to one or more
@@ -1193,6 +1310,14 @@ bool AArch64ExpandPseudo::expandMI(MachineBasicBlock &MBB,
   switch (Opcode) {
   default:
     break;
+
+  case AArch64::SVE2MemoryCopyPseudo:
+  case AArch64::SVE2MemoryCopyNTPseudo:
+  case AArch64::SVE2MemorySetPseudo:
+  case AArch64::SVE2MemorySetNTPseudo:
+  case AArch64::SVE2MemoryMovePseudo:
+  case AArch64::SVE2MemoryMoveNTPseudo:
+    return expandMOPSSVE2Compat(MBB, MBBI, NextMBBI);
 
   case AArch64::BSPv8i8:
   case AArch64::BSPv16i8: {
