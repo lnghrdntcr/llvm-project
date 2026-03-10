@@ -1021,7 +1021,7 @@ let TargetPrefix = "aarch64" in {
   def int_aarch64_sve2_memset
       : DefaultAttrsIntrinsic<
           [],
-          [llvm_ptr_ty, llvm_i32_ty, llvm_i64_ty],
+          [llvm_ptr_ty, llvm_i64_ty, llvm_i64_ty],
           [
             IntrWriteMem,
             IntrArgMemOnly,
@@ -1033,7 +1033,7 @@ let TargetPrefix = "aarch64" in {
   def int_aarch64_sve2_memset_nt
       : DefaultAttrsIntrinsic<
           [],
-          [llvm_ptr_ty, llvm_i32_ty, llvm_i64_ty],
+          [llvm_ptr_ty, llvm_i64_ty, llvm_i64_ty],
           [
             IntrWriteMem,
             IntrArgMemOnly,

@@ -10534,12 +10534,12 @@ let Predicates = [HasSVE2], Defs = [NZCV], Size = 12, mayStore = 1 in {
                                       (ins GPR64common:$Rd, GPR64common:$Rs, GPR64:$Rn),
                                       [], "$Rd = $Rd_wb,$Rs = $Rs_wb,$Rn = $Rn_wb">, Sched<[]>;
   }
-  let mayLoad = 0 in {
+  let mayLoad = 0, Defs = [X9, X10, X11, X12, X13, W13, P0, Z0] in {
     def SVE2MemorySetPseudo  : Pseudo<(outs GPR64common:$Rd_wb, GPR64:$Rn_wb),
-                                      (ins GPR64common:$Rd, GPR64:$Rn, GPR32sp:$Rm),
+                                      (ins GPR64common:$Rd, GPR64:$Rn, GPR64:$Rm),
                                       [], "$Rd = $Rd_wb,$Rn = $Rn_wb,@earlyclobber $Rn_wb">, Sched<[]>;
     def SVE2MemorySetNTPseudo  : Pseudo<(outs GPR64common:$Rd_wb, GPR64:$Rn_wb),
-                                      (ins GPR64common:$Rd, GPR64:$Rn, GPR32sp:$Rm),
+                                      (ins GPR64common:$Rd, GPR64:$Rn, GPR64:$Rm),
                                       [], "$Rd = $Rd_wb,$Rn = $Rn_wb,@earlyclobber $Rn_wb">, Sched<[]>;
   }
 }
@@ -10562,11 +10562,11 @@ let Predicates = [HasSVE2] in {
             (SVE2MemoryMoveNTPseudo $dst, $src, $size)>;
 
   // Pattern for memset
-  def : Pat<(int_aarch64_sve2_memset GPR64common:$dst, GPR32sp:$val, GPR64:$size),
+  def : Pat<(int_aarch64_sve2_memset GPR64common:$dst, GPR64:$val, GPR64:$size),
             (SVE2MemorySetPseudo $dst, $size, $val)>;
 
   // Pattern for non-temporal memset
-  def : Pat<(int_aarch64_sve2_memset_nt GPR64common:$dst, GPR32sp:$val, GPR64:$size),
+  def : Pat<(int_aarch64_sve2_memset_nt GPR64common:$dst, GPR64:$val, GPR64:$size),
             (SVE2MemorySetNTPseudo $dst, $size, $val)>;
 }
 //-----------------------------------------------------------------------------
