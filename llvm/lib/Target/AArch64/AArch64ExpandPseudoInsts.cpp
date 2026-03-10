@@ -87,12 +87,12 @@ private:
   bool expandSVESpillFill(MachineBasicBlock &MBB,
                           MachineBasicBlock::iterator MBBI, unsigned Opc,
                           unsigned N);
-  bool expandMOPSSVE2CompatCopy(MachineBasicBlock& MBB, 
-                            MachineBasicBlock::iterator MBBI, 
+  bool expandMOPSSVE2CompatCopy(MachineBasicBlock& MBB,
+                            MachineBasicBlock::iterator MBBI,
                             MachineBasicBlock::iterator& NextMBBI);
 
-  bool expandMOPSSVE2CompatSet(MachineBasicBlock& MBB, 
-                            MachineBasicBlock::iterator MBBI, 
+  bool expandMOPSSVE2CompatSet(MachineBasicBlock& MBB,
+                            MachineBasicBlock::iterator MBBI,
                             MachineBasicBlock::iterator& NextMBBI);
 
   bool expandCALL_RVMARKER(MachineBasicBlock &MBB,
@@ -143,12 +143,11 @@ bool AArch64ExpandPseudo::expandMOPSSVE2CompatSet(
   bool IsNonTemporal =
       (Opcode == AArch64::SVE2MemorySetNTPseudo);
 
-  Register DstReg  = MI.getOperand(0).getReg();
-  Register ValReg  = MI.getOperand(1).getReg();
-  Register SizeReg = MI.getOperand(2).getReg();
+  Register DstReg  = MI.getOperand(2).getReg();
+  Register SizeReg = MI.getOperand(3).getReg();
+  Register ValReg  = MI.getOperand(4).getReg();
 
   Register PredReg = AArch64::P0;
-
   Register Z0 = AArch64::Z0;
 
   MachineBasicBlock *FastLoopBB = MF.CreateMachineBasicBlock(MBB.getBasicBlock());
@@ -180,6 +179,8 @@ bool AArch64ExpandPseudo::expandMOPSSVE2CompatSet(
   BuildMI(FastLoopBB, DL, TII->get(AArch64::PTRUE_B), PredReg)
       .addImm(AArch64SVEPredPattern::all);
 
+  constexpr int unrollFactor = 8;
+  constexpr auto effectiveVL = AArch64SVEPredPattern::vl8;
   // --------------------------------------------------
   // Fast loop stores
   // --------------------------------------------------
@@ -197,23 +198,18 @@ bool AArch64ExpandPseudo::expandMOPSSVE2CompatSet(
         .addImm(Offset);
   };
 
-  emitStore(Z0,0);
-  emitStore(Z0,1);
-  emitStore(Z0,2);
-  emitStore(Z0,3);
-
-  for (int i = 0; i < 4; ++i) {
-
-    BuildMI(FastLoopBB, DL, TII->get(AArch64::INCB_XPiI), DstReg)
-        .addReg(DstReg)
-        .addImm(AArch64SVEPredPattern::vl1)
-        .addImm(0);
-
-    BuildMI(FastLoopBB, DL, TII->get(AArch64::DECB_XPiI), SizeReg)
-        .addReg(SizeReg)
-        .addImm(AArch64SVEPredPattern::vl1)
-        .addImm(0);
+  for (int i = 0; i < unrollFactor; ++i) {
+    emitStore(Z0, i);
   }
+  BuildMI(FastLoopBB, DL, TII->get(AArch64::INCB_XPiI), DstReg)
+      .addReg(DstReg)
+      .addImm(effectiveVL)
+      .addImm(0);
+
+  BuildMI(FastLoopBB, DL, TII->get(AArch64::DECB_XPiI), SizeReg)
+      .addReg(SizeReg)
+      .addImm(effectiveVL)
+      .addImm(0);
 
   BuildMI(FastLoopBB, DL, TII->get(AArch64::SUBSXri), AArch64::XZR)
       .addReg(SizeReg)
@@ -300,10 +296,13 @@ bool AArch64ExpandPseudo::expandMOPSSVE2CompatCopy(
 
   Register PredReg = AArch64::P0;
 
-  Register Z0 = AArch64::Z0;
-  Register Z1 = AArch64::Z1;
-  Register Z2 = AArch64::Z2;
-  Register Z3 = AArch64::Z3;
+  static constexpr int NumZRegs = 8;
+  static constexpr auto effectiveVL = AArch64SVEPredPattern::vl8;
+
+  SmallVector<Register, NumZRegs> ZRegs;
+
+  for (int i = 0; i < NumZRegs; ++i)
+    ZRegs.push_back(AArch64::Z0 + i);
 
   MachineBasicBlock *FastLoopBB = MF.CreateMachineBasicBlock(MBB.getBasicBlock());
   MachineBasicBlock *TailLoopBB = MF.CreateMachineBasicBlock(MBB.getBasicBlock());
@@ -365,33 +364,25 @@ bool AArch64ExpandPseudo::expandMOPSSVE2CompatCopy(
     }
   };
 
-  emitLoadStore(Z0, 0);
-  emitLoadStore(Z1, 1);
-  emitLoadStore(Z2, 2);
-  emitLoadStore(Z3, 3);
+  for (int i = 0; i < NumZRegs; ++i)
+    emitLoadStore(ZRegs[i], i);
 
-  // Advance pointers (4 vectors)
+  BuildMI(FastLoopBB, DL, TII->get(AArch64::INCB_XPiI), SrcReg)
+      .addReg(SrcReg)
+      .addImm(effectiveVL)
+      .addImm(0);
 
-  for (int i = 0; i < 4; ++i) {
+  BuildMI(FastLoopBB, DL, TII->get(AArch64::INCB_XPiI), DstReg)
+      .addReg(DstReg)
+      .addImm(effectiveVL)
+      .addImm(0);
 
-    BuildMI(FastLoopBB, DL, TII->get(AArch64::INCB_XPiI), SrcReg)
-        .addReg(SrcReg)
-        .addImm(AArch64SVEPredPattern::vl1)
-        .addImm(0);
+  BuildMI(FastLoopBB, DL, TII->get(AArch64::DECB_XPiI), SizeReg)
+      .addReg(SizeReg)
+      .addImm(effectiveVL)
+      .addImm(0);
 
-    BuildMI(FastLoopBB, DL, TII->get(AArch64::INCB_XPiI), DstReg)
-        .addReg(DstReg)
-        .addImm(AArch64SVEPredPattern::vl1)
-        .addImm(0);
-
-    BuildMI(FastLoopBB, DL, TII->get(AArch64::DECB_XPiI), SizeReg)
-        .addReg(SizeReg)
-        .addImm(AArch64SVEPredPattern::vl1)
-        .addImm(0);
-  }
-
-  // Continue fast loop if size >= 4VL
-
+  // Continue fast loop if size >= effectiveVL
   BuildMI(FastLoopBB, DL, TII->get(AArch64::SUBSXri), AArch64::XZR)
       .addReg(SizeReg)
       .addImm(0)
@@ -412,34 +403,7 @@ bool AArch64ExpandPseudo::expandMOPSSVE2CompatCopy(
       .addReg(AArch64::XZR)
       .addReg(SizeReg);
 
-  if (IsNonTemporal) {
-
-    BuildMI(TailLoopBB, DL, TII->get(AArch64::LDNT1B_ZRI))
-        .addReg(Z0, RegState::Define)
-        .addReg(PredReg)
-        .addReg(SrcReg)
-        .addImm(0);
-
-    BuildMI(TailLoopBB, DL, TII->get(AArch64::STNT1B_ZRI))
-        .addReg(Z0)
-        .addReg(PredReg)
-        .addReg(DstReg)
-        .addImm(0);
-
-  } else {
-
-    BuildMI(TailLoopBB, DL, TII->get(AArch64::LD1B_IMM))
-        .addReg(Z0, RegState::Define)
-        .addReg(PredReg)
-        .addReg(SrcReg)
-        .addImm(0);
-
-    BuildMI(TailLoopBB, DL, TII->get(AArch64::ST1B_IMM))
-        .addReg(Z0)
-        .addReg(PredReg)
-        .addReg(DstReg)
-        .addImm(0);
-  }
+  emitLoadStore(ZRegs[0], 0);
 
   BuildMI(TailLoopBB, DL, TII->get(AArch64::INCB_XPiI), SrcReg)
       .addReg(SrcReg)
@@ -471,7 +435,6 @@ bool AArch64ExpandPseudo::expandMOPSSVE2CompatCopy(
   // --------------------------------------------------
 
   NextMBBI = MBB.end();
-
   MI.eraseFromParent();
 
   LivePhysRegs LiveRegs;

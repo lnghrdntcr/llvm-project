@@ -713,7 +713,7 @@ def top32Zero: PatLeaf<(i64 GPR64:$src), [{
   return Op.getValueType() == MVT::i64 &&
          CurDAG->MaskedValueIsZero(Op, APInt::getHighBitsSet(64, 32));
   }]> {
-  let GISelLeafPredicateCode = [{ 
+  let GISelLeafPredicateCode = [{
     return VT && VT->maskedValueIsZero(Reg, APInt::getHighBitsSet(64, 32)); }];
 }
 
@@ -722,14 +722,14 @@ def topbitsallzero32: PatLeaf<(i32 GPR32:$src), [{
   return Op.getValueType() == MVT::i32 &&
          CurDAG->MaskedValueIsZero(Op, APInt::getHighBitsSet(32, 31));
   }]> {
-  let GISelLeafPredicateCode = [{ 
+  let GISelLeafPredicateCode = [{
     return VT && VT->maskedValueIsZero(Reg, APInt::getHighBitsSet(32, 31)); }];
 }
 def topbitsallzero64: PatLeaf<(i64 GPR64:$src), [{
   return Op.getValueType() == MVT::i64 &&
          CurDAG->MaskedValueIsZero(Op, APInt::getHighBitsSet(64, 63));
   }]> {
-  let GISelLeafPredicateCode = [{ 
+  let GISelLeafPredicateCode = [{
     return VT && VT->maskedValueIsZero(Reg, APInt::getHighBitsSet(64, 63)); }];
 }
 
@@ -1657,7 +1657,7 @@ let Predicates = [HasNEON, HasDotProd] in {
   def : Pat<(v2i32 (partial_reduce_umla (v2i32 V64:$Acc), (v8i8 V64:$MulLHS), (v8i8 V64:$MulRHS))),
             (v2i32 (UDOTv8i8 V64:$Acc, V64:$MulLHS, V64:$MulRHS))>;
   def : Pat<(v2i32 (partial_reduce_smla (v2i32 V64:$Acc), (v8i8 V64:$MulLHS), (v8i8 V64:$MulRHS))),
-            (v2i32 (SDOTv8i8 V64:$Acc, V64:$MulLHS, V64:$MulRHS))>; 
+            (v2i32 (SDOTv8i8 V64:$Acc, V64:$MulLHS, V64:$MulRHS))>;
 } // End HasNEON, HasDotProd
 
 // ARMv8.6-A BFloat
@@ -10477,7 +10477,7 @@ let Predicates = [HasMOPS], Defs = [NZCV], Size = 12, mayStore = 1, mayLoad = 1 
   def MOPSMemoryCopyNTPseudo : Pseudo<(outs GPR64common:$Rd_wb, GPR64common:$Rs_wb, GPR64:$Rn_wb),
                                       (ins GPR64common:$Rd, GPR64common:$Rs, GPR64:$Rn),
                                       [], "$Rd = $Rd_wb,$Rs = $Rs_wb,$Rn = $Rn_wb">, Sched<[]>;
-  
+
   def MOPSMemoryMoveNTPseudo : Pseudo<(outs GPR64common:$Rd_wb, GPR64common:$Rs_wb, GPR64:$Rn_wb),
                                       (ins GPR64common:$Rd, GPR64common:$Rs, GPR64:$Rn),
                                       [], "$Rd = $Rd_wb,$Rs = $Rs_wb,$Rn = $Rn_wb">, Sched<[]>;
@@ -10498,23 +10498,23 @@ let Predicates = [HasMOPS] in {
   // Pattern for memcpy intrinsic
   def : Pat<(int_aarch64_mops_memcpy GPR64common:$dst, GPR64common:$src, GPR64:$size),
             (MOPSMemoryCopyPseudo $dst, $src, $size)>;
-  
+
   // Pattern for non-temporal memcpy
   def : Pat<(int_aarch64_mops_memcpy_nt GPR64common:$dst, GPR64common:$src, GPR64:$size),
             (MOPSMemoryCopyNTPseudo $dst, $src, $size)>;
-  
+
   // Pattern for memmove intrinsic
   def : Pat<(int_aarch64_mops_memmove GPR64common:$dst, GPR64common:$src, GPR64:$size),
             (MOPSMemoryMovePseudo $dst, $src, $size)>;
-  
+
   // Pattern for non-temporal memmove
   def : Pat<(int_aarch64_mops_memmove_nt GPR64common:$dst, GPR64common:$src, GPR64:$size),
             (MOPSMemoryMoveNTPseudo $dst, $src, $size)>;
-  
+
   // Pattern for memset
   def : Pat<(int_aarch64_mops_memset GPR64common:$dst, GPR64:$val, GPR64:$size),
             (MOPSMemorySetPseudo $dst, $size, $val)>;
-  
+
   // Pattern for non-temporal memset
   def : Pat<(int_aarch64_mops_memset_nt GPR64common:$dst, GPR64:$val, GPR64:$size),
             (MOPSMemorySetNTPseudo $dst, $size, $val)>;
@@ -10536,10 +10536,10 @@ let Predicates = [HasSVE2], Defs = [NZCV], Size = 12, mayStore = 1 in {
   }
   let mayLoad = 0 in {
     def SVE2MemorySetPseudo  : Pseudo<(outs GPR64common:$Rd_wb, GPR64:$Rn_wb),
-                                      (ins GPR64common:$Rd, GPR64:$Rn, GPR64:$Rm),
+                                      (ins GPR64common:$Rd, GPR64:$Rn, GPR32sp:$Rm),
                                       [], "$Rd = $Rd_wb,$Rn = $Rn_wb,@earlyclobber $Rn_wb">, Sched<[]>;
     def SVE2MemorySetNTPseudo  : Pseudo<(outs GPR64common:$Rd_wb, GPR64:$Rn_wb),
-                                      (ins GPR64common:$Rd, GPR64:$Rn, GPR64:$Rm),
+                                      (ins GPR64common:$Rd, GPR64:$Rn, GPR32sp:$Rm),
                                       [], "$Rd = $Rd_wb,$Rn = $Rn_wb,@earlyclobber $Rn_wb">, Sched<[]>;
   }
 }
@@ -10548,25 +10548,25 @@ let Predicates = [HasSVE2] in {
   // Pattern for memcpy intrinsic
   def : Pat<(int_aarch64_sve2_memcpy GPR64common:$dst, GPR64common:$src, GPR64:$size),
             (SVE2MemoryCopyPseudo $dst, $src, $size)>;
-  
+
   // Pattern for non-temporal memcpy
   def : Pat<(int_aarch64_sve2_memcpy_nt GPR64common:$dst, GPR64common:$src, GPR64:$size),
             (SVE2MemoryCopyNTPseudo $dst, $src, $size)>;
-  
+
   // Pattern for memmove intrinsic
   def : Pat<(int_aarch64_sve2_memmove GPR64common:$dst, GPR64common:$src, GPR64:$size),
             (SVE2MemoryMovePseudo $dst, $src, $size)>;
-  
+
   // Pattern for non-temporal memmove
   def : Pat<(int_aarch64_sve2_memmove_nt GPR64common:$dst, GPR64common:$src, GPR64:$size),
             (SVE2MemoryMoveNTPseudo $dst, $src, $size)>;
-  
+
   // Pattern for memset
-  def : Pat<(int_aarch64_sve2_memset GPR64common:$dst, GPR64:$val, GPR64:$size),
+  def : Pat<(int_aarch64_sve2_memset GPR64common:$dst, GPR32sp:$val, GPR64:$size),
             (SVE2MemorySetPseudo $dst, $size, $val)>;
-  
+
   // Pattern for non-temporal memset
-  def : Pat<(int_aarch64_sve2_memset_nt GPR64common:$dst, GPR64:$val, GPR64:$size),
+  def : Pat<(int_aarch64_sve2_memset_nt GPR64common:$dst, GPR32sp:$val, GPR64:$size),
             (SVE2MemorySetNTPseudo $dst, $size, $val)>;
 }
 //-----------------------------------------------------------------------------
