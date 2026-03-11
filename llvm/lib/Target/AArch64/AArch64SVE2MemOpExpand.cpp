@@ -97,9 +97,9 @@ bool AArch64SVE2MemOpExpand::expandSet(
 
   bool IsNT = (Opcode == AArch64::SVE2MemorySetNTPseudo);
 
-  Register DstReg  = MI.getOperand(2).getReg();
-  Register SizeReg = MI.getOperand(3).getReg();
-  Register ValReg  = MI.getOperand(4).getReg();
+  Register DstReg  = MI.getOperand(0).getReg();
+  Register SizeReg = MI.getOperand(1).getReg();
+  Register ValReg  = MI.getOperand(2).getReg();
 
   auto *GPR64   = &AArch64::GPR64RegClass;
   auto *GPR64sp = &AArch64::GPR64spRegClass;
@@ -388,9 +388,9 @@ bool AArch64SVE2MemOpExpand::expandCopy(
 
   bool IsNT = (Opcode == AArch64::SVE2MemoryCopyNTPseudo);
 
-  Register DstReg  = MI.getOperand(3).getReg();
-  Register SrcReg  = MI.getOperand(4).getReg();
-  Register SizeReg = MI.getOperand(5).getReg();
+  Register DstReg  = MI.getOperand(0).getReg();
+  Register SrcReg  = MI.getOperand(1).getReg();
+  Register SizeReg = MI.getOperand(2).getReg();
 
   auto *GPR64   = &AArch64::GPR64RegClass;
   auto *GPR64sp = &AArch64::GPR64spRegClass;

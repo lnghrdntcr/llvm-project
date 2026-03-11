@@ -10519,28 +10519,28 @@ let Predicates = [HasMOPS] in {
   def : Pat<(int_aarch64_mops_memset_nt GPR64common:$dst, GPR64:$val, GPR64:$size),
             (MOPSMemorySetNTPseudo $dst, $size, $val)>;
 }
-let Predicates = [HasSVE2], Defs = [NZCV], Size = 12, mayStore = 1 in {
+let Predicates = [HasSVE2], Defs = [NZCV], Size = 12, mayStore = 1, hasSideEffects = 1 in {
   let mayLoad = 1 in {
-    def SVE2MemoryCopyPseudo : Pseudo<(outs GPR64common:$Rd_wb, GPR64common:$Rs_wb, GPR64:$Rn_wb),
+    def SVE2MemoryCopyPseudo : Pseudo<(outs),
                                       (ins GPR64common:$Rd, GPR64common:$Rs, GPR64:$Rn),
-                                      [], "$Rd = $Rd_wb,$Rs = $Rs_wb,$Rn = $Rn_wb">, Sched<[]>;
-    def SVE2MemoryMovePseudo : Pseudo<(outs GPR64common:$Rd_wb, GPR64common:$Rs_wb, GPR64:$Rn_wb),
+                                      []>, Sched<[]>;
+    def SVE2MemoryMovePseudo : Pseudo<(outs),
                                       (ins GPR64common:$Rd, GPR64common:$Rs, GPR64:$Rn),
-                                      [], "$Rd = $Rd_wb,$Rs = $Rs_wb,$Rn = $Rn_wb">, Sched<[]>;
-    def SVE2MemoryCopyNTPseudo : Pseudo<(outs GPR64common:$Rd_wb, GPR64common:$Rs_wb, GPR64:$Rn_wb),
+                                      []>, Sched<[]>;
+    def SVE2MemoryCopyNTPseudo : Pseudo<(outs),
                                       (ins GPR64common:$Rd, GPR64common:$Rs, GPR64:$Rn),
-                                      [], "$Rd = $Rd_wb,$Rs = $Rs_wb,$Rn = $Rn_wb">, Sched<[]>;
-    def SVE2MemoryMoveNTPseudo : Pseudo<(outs GPR64common:$Rd_wb, GPR64common:$Rs_wb, GPR64:$Rn_wb),
+                                      []>, Sched<[]>;
+    def SVE2MemoryMoveNTPseudo : Pseudo<(outs),
                                       (ins GPR64common:$Rd, GPR64common:$Rs, GPR64:$Rn),
-                                      [], "$Rd = $Rd_wb,$Rs = $Rs_wb,$Rn = $Rn_wb">, Sched<[]>;
+                                      []>, Sched<[]>;
   }
   let mayLoad = 0 in {
-    def SVE2MemorySetPseudo  : Pseudo<(outs GPR64common:$Rd_wb, GPR64:$Rn_wb),
+    def SVE2MemorySetPseudo  : Pseudo<(outs),
                                       (ins GPR64common:$Rd, GPR64:$Rn, GPR64:$Rm),
-                                      [], "$Rd = $Rd_wb,$Rn = $Rn_wb,@earlyclobber $Rn_wb">, Sched<[]>;
-    def SVE2MemorySetNTPseudo  : Pseudo<(outs GPR64common:$Rd_wb, GPR64:$Rn_wb),
+                                      []>, Sched<[]>;
+    def SVE2MemorySetNTPseudo  : Pseudo<(outs),
                                       (ins GPR64common:$Rd, GPR64:$Rn, GPR64:$Rm),
-                                      [], "$Rd = $Rd_wb,$Rn = $Rn_wb,@earlyclobber $Rn_wb">, Sched<[]>;
+                                      []>, Sched<[]>;
   }
 }
 
