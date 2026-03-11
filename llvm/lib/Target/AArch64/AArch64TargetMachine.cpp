@@ -813,6 +813,7 @@ bool AArch64PassConfig::addILPOpts() {
 
 void AArch64PassConfig::addPreRegAlloc() {
   // Change dead register definitions to refer to the zero register.
+  constexpr bool EnableSVE2MemOpExpand = true; // For now we do this
   if (TM->getOptLevel() != CodeGenOptLevel::None &&
       EnableDeadRegisterElimination)
     addPass(createAArch64DeadRegisterDefinitions());
@@ -826,6 +827,9 @@ void AArch64PassConfig::addPreRegAlloc() {
   }
   if (TM->getOptLevel() != CodeGenOptLevel::None && EnableMachinePipeliner)
     addPass(&MachinePipelinerID);
+
+  if (TM->getOptLevel() != CodeGenOptLevel::None && EnableSVE2MemOpExpand)
+    addPass(createAArch64SVE2MemOpExpandPass());
 }
 
 void AArch64PassConfig::addPostRegAlloc() {

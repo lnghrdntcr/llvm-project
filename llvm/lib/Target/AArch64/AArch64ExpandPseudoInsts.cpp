@@ -201,11 +201,13 @@ bool AArch64ExpandPseudo::expandMOPSSVE2CompatSet(
   BuildMI(InitBB, DL, TII->get(AArch64::ORRXrs), DupSourceRegMirror)
       .addReg(ValReg)
       .addReg(AArch64::XZR)
-      .addImm(0);
+      .addImm(0)
+      .addReg(DupSourceReg, RegState::ImplicitDefine);
 
   // Dup value
   BuildMI(InitBB, DL, TII->get(AArch64::DUP_ZR_B), Z0)
-      .addReg(DupSourceReg);
+      .addReg(DupSourceReg)
+      .addReg(DupSourceReg, RegState::Implicit);  ;
 
   // Get vlen
   BuildMI(InitBB, DL, TII->get(AArch64::CNTB_XPiI), VLenReg)
@@ -337,6 +339,7 @@ bool AArch64ExpandPseudo::expandMOPSSVE2CompatCopy(
     MachineBasicBlock::iterator MBBI,
     MachineBasicBlock::iterator &NextMBBI) {
 
+llvm::errs() << "Expanding Memcpy OLD\n";
   MachineInstr &MI = *MBBI;
   unsigned Opcode = MI.getOpcode();
   DebugLoc DL = MI.getDebugLoc();
@@ -348,34 +351,45 @@ bool AArch64ExpandPseudo::expandMOPSSVE2CompatCopy(
       (Opcode == AArch64::SVE2MemoryCopyNTPseudo ||
        Opcode == AArch64::SVE2MemoryMoveNTPseudo);
 
+  // Original operand registers — read-only, never written.
   Register DstReg  = MI.getOperand(0).getReg();
   Register SrcReg  = MI.getOperand(1).getReg();
   Register SizeReg = MI.getOperand(2).getReg();
 
+  // Used registers
   Register PredReg = AArch64::P0;
-  Register LoopGuard = AArch64::X16;
 
+  // Working copies
+  Register DstWorkingReg    = AArch64::X14;
+  Register SrcWorkingReg    = AArch64::X15;
+  Register FastLoopTimesReg = AArch64::X16;
+  Register TailSizeReg      = AArch64::X17;
+  Register VLenReg          = AArch64::X18;
+
+  // Z registers for the unrolled fast loop
   static constexpr int NumZRegs = 8;
   static constexpr auto EffectiveVL = AArch64SVEPredPattern::vl8;
 
   SmallVector<Register, NumZRegs> ZRegs;
-
   for (int i = 0; i < NumZRegs; ++i)
     ZRegs.push_back(AArch64::Z0 + i);
 
+  MachineBasicBlock *InitBB     = MF.CreateMachineBasicBlock(MBB.getBasicBlock());
   MachineBasicBlock *FastLoopBB = MF.CreateMachineBasicBlock(MBB.getBasicBlock());
   MachineBasicBlock *TailLoopBB = MF.CreateMachineBasicBlock(MBB.getBasicBlock());
   MachineBasicBlock *ExitBB     = MF.CreateMachineBasicBlock(MBB.getBasicBlock());
 
-  MF.insert(++MBB.getIterator(), FastLoopBB);
+  MF.insert(++MBB.getIterator(), InitBB);
+  MF.insert(++InitBB->getIterator(), FastLoopBB);
   MF.insert(++FastLoopBB->getIterator(), TailLoopBB);
   MF.insert(++TailLoopBB->getIterator(), ExitBB);
 
   ExitBB->splice(ExitBB->end(), &MBB, std::next(MBBI), MBB.end());
   ExitBB->transferSuccessors(&MBB);
 
-  MBB.addSuccessor(FastLoopBB);
-  MBB.addSuccessor(TailLoopBB);
+  MBB.addSuccessor(InitBB);
+  InitBB->addSuccessor(FastLoopBB);
+  InitBB->addSuccessor(TailLoopBB);
 
   FastLoopBB->addSuccessor(FastLoopBB);
   FastLoopBB->addSuccessor(TailLoopBB);
@@ -384,63 +398,92 @@ bool AArch64ExpandPseudo::expandMOPSSVE2CompatCopy(
   TailLoopBB->addSuccessor(ExitBB);
 
   // --------------------------------------------------
-  // Loop Guard
+  // InitBB: copy operands, compute loop count and tail size
   // --------------------------------------------------
 
-  BuildMI(&MBB, DL, TII->get(AArch64::ORRXrs), LoopGuard)
-      .addReg(SizeReg)   // source
+  // Working pointer copies.
+  BuildMI(InitBB, DL, TII->get(AArch64::ORRXrs), DstWorkingReg)
+      .addReg(DstReg)
       .addReg(AArch64::XZR)
       .addImm(0);
 
-  BuildMI(&MBB, DL, TII->get(AArch64::DECB_XPiI), LoopGuard)
-    .addReg(LoopGuard)
-    .addImm(EffectiveVL)
-    .addImm(0);
+  BuildMI(InitBB, DL, TII->get(AArch64::ORRXrs), SrcWorkingReg)
+      .addReg(SrcReg)
+      .addReg(AArch64::XZR)
+      .addImm(0);
 
-  BuildMI(&MBB, DL, TII->get(AArch64::SUBSXri), AArch64::XZR)
-      .addReg(LoopGuard)
+  // All-true predicate for the fast loop.
+  BuildMI(InitBB, DL, TII->get(AArch64::PTRUE_B), PredReg)
+      .addImm(AArch64SVEPredPattern::all);
+
+  // VLenReg = cntb (bytes per SVE vector)
+  BuildMI(InitBB, DL, TII->get(AArch64::CNTB_XPiI), VLenReg)
+      .addImm(AArch64SVEPredPattern::all)
+      .addImm(1);
+
+  // FastLoopTimesReg = Size / (8 * VL)
+  //   1) FastLoopTimesReg = Size >> 3
+  BuildMI(InitBB, DL, TII->get(AArch64::UBFMXri), FastLoopTimesReg)
+      .addReg(SizeReg)
+      .addImm(3)
+      .addImm(63);
+
+  //   2) FastLoopTimesReg = FastLoopTimesReg / VLenReg
+  BuildMI(InitBB, DL, TII->get(AArch64::UDIVXr), FastLoopTimesReg)
+      .addReg(FastLoopTimesReg)
+      .addReg(VLenReg);
+
+  // TailSizeReg = Size - FastLoopTimesReg * (8 * VL)
+  //   1) TailSizeReg = VLenReg << 3  =  8 * VL
+  BuildMI(InitBB, DL, TII->get(AArch64::UBFMXri), TailSizeReg)
+      .addReg(VLenReg)
+      .addImm(61)
+      .addImm(60);
+
+  //   2) TailSizeReg = SizeReg - FastLoopTimesReg * TailSizeReg
+  BuildMI(InitBB, DL, TII->get(AArch64::MSUBXrrr), TailSizeReg)
+      .addReg(FastLoopTimesReg)
+      .addReg(TailSizeReg)
+      .addReg(SizeReg);
+
+  // If FastLoopTimesReg == 0, skip fast loop and go straight to tail.
+  BuildMI(InitBB, DL, TII->get(AArch64::SUBSXri), AArch64::XZR)
+      .addReg(FastLoopTimesReg)
       .addImm(0)
       .addImm(0)
       .addReg(AArch64::NZCV, RegState::ImplicitDefine);
 
-  BuildMI(&MBB, DL, TII->get(AArch64::Bcc))
-      .addImm(AArch64CC::LT)
+  BuildMI(InitBB, DL, TII->get(AArch64::Bcc))
+      .addImm(AArch64CC::EQ)
       .addMBB(TailLoopBB)
       .addReg(AArch64::NZCV, RegState::Implicit | RegState::Kill);
 
-  BuildMI(&MBB, DL, TII->get(AArch64::PTRUE_B), PredReg)
-      .addImm(AArch64SVEPredPattern::all);
+  // --------------------------------------------------
+  // FastLoopBB: 8 load/store pairs, advance pointers, decrement counter
+  // --------------------------------------------------
 
-  // Fast loop body
-
-  auto emitLoadStore = [&](unsigned Vec, int Offset) {
-
+  auto emitLoadStore = [&](Register Vec, int Offset) {
     if (IsNonTemporal) {
-
       BuildMI(FastLoopBB, DL, TII->get(AArch64::LDNT1B_ZRI))
           .addReg(Vec, RegState::Define)
           .addReg(PredReg)
-          .addReg(SrcReg)
+          .addReg(SrcWorkingReg)
           .addImm(Offset);
-
       BuildMI(FastLoopBB, DL, TII->get(AArch64::STNT1B_ZRI))
           .addReg(Vec)
           .addReg(PredReg)
-          .addReg(DstReg)
+          .addReg(DstWorkingReg)
           .addImm(Offset);
-
     } else {
-
       BuildMI(FastLoopBB, DL, TII->get(AArch64::LD1B_IMM))
           .addReg(Vec, RegState::Define)
           .addReg(PredReg)
-          .addReg(SrcReg)
+          .addReg(SrcWorkingReg)
           .addImm(Offset);
-
       BuildMI(FastLoopBB, DL, TII->get(AArch64::ST1B_IMM))
           .addReg(Vec)
           .addReg(PredReg)
-          .addReg(DstReg)
+          .addReg(DstWorkingReg)
           .addImm(Offset);
     }
   };
@@ -448,87 +491,84 @@ bool AArch64ExpandPseudo::expandMOPSSVE2CompatCopy(
   for (int i = 0; i < NumZRegs; ++i)
     emitLoadStore(ZRegs[i], i);
 
-  BuildMI(FastLoopBB, DL, TII->get(AArch64::INCB_XPiI), SrcReg)
-      .addReg(SrcReg)
+  // Advance both pointers by 8*VL bytes.
+  BuildMI(FastLoopBB, DL, TII->get(AArch64::INCB_XPiI), SrcWorkingReg)
+      .addReg(SrcWorkingReg)
       .addImm(EffectiveVL)
       .addImm(0);
 
-  BuildMI(FastLoopBB, DL, TII->get(AArch64::INCB_XPiI), DstReg)
-      .addReg(DstReg)
+  BuildMI(FastLoopBB, DL, TII->get(AArch64::INCB_XPiI), DstWorkingReg)
+      .addReg(DstWorkingReg)
       .addImm(EffectiveVL)
       .addImm(0);
 
-  BuildMI(FastLoopBB, DL, TII->get(AArch64::DECB_XPiI), SizeReg)
-      .addReg(SizeReg)
-      .addImm(EffectiveVL)
-      .addImm(0);
-
-  // Continue fast loop if size >= EffectiveVL
-  BuildMI(FastLoopBB, DL, TII->get(AArch64::SUBSXri), AArch64::XZR)
-      .addReg(SizeReg)
-      .addImm(0)
+  // Decrement loop counter — true RAW dependency pins the branch.
+  BuildMI(FastLoopBB, DL, TII->get(AArch64::SUBSXri), FastLoopTimesReg)
+      .addReg(FastLoopTimesReg)
+      .addImm(1)
       .addImm(0)
       .addReg(AArch64::NZCV, RegState::ImplicitDefine);
 
   BuildMI(FastLoopBB, DL, TII->get(AArch64::Bcc))
-      .addImm(AArch64CC::GT)
+      .addImm(AArch64CC::NE)
       .addMBB(FastLoopBB)
       .addReg(AArch64::NZCV, RegState::Implicit | RegState::Kill);
 
   BuildMI(FastLoopBB, DL, TII->get(AArch64::B)).addMBB(TailLoopBB);
 
   // --------------------------------------------------
-  // Tail loop (masked)
+  // TailLoopBB: one predicated vector at a time
+  // Uses TailSizeReg (precomputed remainder). SizeReg never touched.
   // --------------------------------------------------
 
+  // Generate predicate for however many bytes remain.
   BuildMI(TailLoopBB, DL, TII->get(AArch64::WHILELO_PXX_B), PredReg)
       .addReg(AArch64::XZR)
-      .addReg(SizeReg);
+      .addReg(TailSizeReg);
 
   if (IsNonTemporal) {
-
     BuildMI(TailLoopBB, DL, TII->get(AArch64::LDNT1B_ZRI))
         .addReg(ZRegs[0], RegState::Define)
         .addReg(PredReg)
-        .addReg(SrcReg)
+        .addReg(SrcWorkingReg)
         .addImm(0);
-
     BuildMI(TailLoopBB, DL, TII->get(AArch64::STNT1B_ZRI))
         .addReg(ZRegs[0])
         .addReg(PredReg)
-        .addReg(DstReg)
+        .addReg(DstWorkingReg)
         .addImm(0);
   } else {
     BuildMI(TailLoopBB, DL, TII->get(AArch64::LD1B_IMM))
         .addReg(ZRegs[0], RegState::Define)
         .addReg(PredReg)
-        .addReg(SrcReg)
+        .addReg(SrcWorkingReg)
         .addImm(0);
-
     BuildMI(TailLoopBB, DL, TII->get(AArch64::ST1B_IMM))
         .addReg(ZRegs[0])
         .addReg(PredReg)
-        .addReg(DstReg)
+        .addReg(DstWorkingReg)
         .addImm(0);
   }
 
-  BuildMI(TailLoopBB, DL, TII->get(AArch64::INCB_XPiI), SrcReg)
-      .addReg(SrcReg)
+  // Advance both pointers by one VL.
+  BuildMI(TailLoopBB, DL, TII->get(AArch64::INCB_XPiI), SrcWorkingReg)
+      .addReg(SrcWorkingReg)
       .addImm(AArch64SVEPredPattern::vl1)
       .addImm(0);
 
-  BuildMI(TailLoopBB, DL, TII->get(AArch64::INCB_XPiI), DstReg)
-      .addReg(DstReg)
+  BuildMI(TailLoopBB, DL, TII->get(AArch64::INCB_XPiI), DstWorkingReg)
+      .addReg(DstWorkingReg)
       .addImm(AArch64SVEPredPattern::vl1)
       .addImm(0);
 
-  BuildMI(TailLoopBB, DL, TII->get(AArch64::DECB_XPiI), SizeReg)
-      .addReg(SizeReg)
+  // Decrement tail size by one VL.
+  BuildMI(TailLoopBB, DL, TII->get(AArch64::DECB_XPiI), TailSizeReg)
+      .addReg(TailSizeReg)
       .addImm(AArch64SVEPredPattern::vl1)
       .addImm(0);
 
   BuildMI(TailLoopBB, DL, TII->get(AArch64::SUBSXri), AArch64::XZR)
-      .addReg(SizeReg)
+      .addReg(TailSizeReg)
       .addImm(0)
       .addImm(0)
       .addReg(AArch64::NZCV, RegState::ImplicitDefine);
@@ -541,17 +581,20 @@ bool AArch64ExpandPseudo::expandMOPSSVE2CompatCopy(
   BuildMI(TailLoopBB, DL, TII->get(AArch64::B)).addMBB(ExitBB);
 
   // --------------------------------------------------
+
   NextMBBI = MBB.end();
   MI.eraseFromParent();
 
   LivePhysRegs LiveRegs;
   computeAndAddLiveIns(LiveRegs, MBB);
+  computeAndAddLiveIns(LiveRegs, *InitBB);
   computeAndAddLiveIns(LiveRegs, *FastLoopBB);
   computeAndAddLiveIns(LiveRegs, *TailLoopBB);
   computeAndAddLiveIns(LiveRegs, *ExitBB);
 
   return true;
 }
+
 
 /// Expand a MOVi32imm or MOVi64imm pseudo instruction to one or more
 /// real move-immediate instructions to synthesize the immediate.
@@ -1633,9 +1676,9 @@ bool AArch64ExpandPseudo::expandMI(MachineBasicBlock &MBB,
   case AArch64::SVE2MemoryMoveNTPseudo:
     return expandMOPSSVE2CompatCopy(MBB, MBBI, NextMBBI);
 
-  case AArch64::SVE2MemorySetPseudo:
-  case AArch64::SVE2MemorySetNTPseudo:
-    return expandMOPSSVE2CompatSet(MBB, MBBI, NextMBBI);
+  // case AArch64::SVE2MemorySetPseudo:
+  // case AArch64::SVE2MemorySetNTPseudo:
+  //   return expandMOPSSVE2CompatSet(MBB, MBBI, NextMBBI);
 
   case AArch64::BSPv8i8:
   case AArch64::BSPv16i8: {
