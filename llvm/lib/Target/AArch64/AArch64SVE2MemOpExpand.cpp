@@ -52,10 +52,10 @@ bool AArch64SVE2MemOpExpand::runOnMachineFunction(MachineFunction &MF) {
       switch (MI.getOpcode()) {
       case AArch64::SVE2MemorySetPseudo:
       case AArch64::SVE2MemorySetNTPseudo:
-      // case AArch64::SVE2MemoryCopyPseudo:
-      // case AArch64::SVE2MemoryCopyNTPseudo:
-      // case AArch64::SVE2MemoryMovePseudo:
-      // case AArch64::SVE2MemoryMoveNTPseudo:
+      case AArch64::SVE2MemoryCopyPseudo:
+      case AArch64::SVE2MemoryCopyNTPseudo:
+      case AArch64::SVE2MemoryMovePseudo:
+      case AArch64::SVE2MemoryMoveNTPseudo:
         ToExpand.push_back(&MI);
         break;
       default:
@@ -69,12 +69,12 @@ bool AArch64SVE2MemOpExpand::runOnMachineFunction(MachineFunction &MF) {
     case AArch64::SVE2MemorySetNTPseudo:
       Changed |= expandSet(MBB, MI);
       break;
-    // case AArch64::SVE2MemoryCopyPseudo:
-    // case AArch64::SVE2MemoryCopyNTPseudo:
-    // case AArch64::SVE2MemoryMovePseudo:
-    // case AArch64::SVE2MemoryMoveNTPseudo:
-    //   Changed |= expandCopy(MBB, MI);
-    //   break;
+    case AArch64::SVE2MemoryCopyPseudo:
+    case AArch64::SVE2MemoryCopyNTPseudo:
+    case AArch64::SVE2MemoryMovePseudo:
+    case AArch64::SVE2MemoryMoveNTPseudo:
+      Changed |= expandCopy(MBB, MI);
+      break;
     default:
       llvm_unreachable("Unexpected opcode");
     }
@@ -367,6 +367,344 @@ bool AArch64SVE2MemOpExpand::expandSet(
       MachineInstr &TailPhi = *PhiIt;
       TailPhi.getOperand(5).setReg(TailNext);
     }
+
+  MI.eraseFromParent();
+
+  MBB.updateTerminator(ExitBB);
+  return true;
+}
+
+bool AArch64SVE2MemOpExpand::expandCopy(
+    MachineBasicBlock &MBB,
+    MachineBasicBlock::iterator MBBI) {
+
+  MachineInstr &MI = *MBBI;
+  DebugLoc DL = MI.getDebugLoc();
+  unsigned Opcode = MI.getOpcode();
+
+  MachineFunction &MF = *MBB.getParent();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
+  const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+
+  bool IsNT = (Opcode == AArch64::SVE2MemoryCopyNTPseudo);
+
+  Register DstReg  = MI.getOperand(3).getReg();
+  Register SrcReg  = MI.getOperand(4).getReg();
+  Register SizeReg = MI.getOperand(5).getReg();
+
+  auto *GPR64   = &AArch64::GPR64RegClass;
+  auto *GPR64sp = &AArch64::GPR64spRegClass;
+  auto *ZRC     = &AArch64::ZPRRegClass;
+  auto *PRC     = &AArch64::PPR_3bRegClass;
+
+  auto New64   = [&]() { return MRI.createVirtualRegister(GPR64); };
+  auto New64sp = [&]() { return MRI.createVirtualRegister(GPR64sp); };
+  auto NewZ    = [&]() { return MRI.createVirtualRegister(ZRC); };
+  auto NewP    = [&]() { return MRI.createVirtualRegister(PRC); };
+
+  constexpr int Unroll = 8;
+  constexpr auto EffectiveVL = AArch64SVEPredPattern::vl8;
+
+  SmallVector<Register, 8> Vecs;
+  for (int i = 0; i < Unroll; ++i)
+    Vecs.push_back(NewZ());
+
+  Register Pred  = NewP();
+  Register Dst0  = New64sp();
+  Register Src0  = New64sp();
+  Register Loop0 = New64();
+  Register Loop1 = New64();
+  Register Tail0 = New64();
+  Register Tail1 = New64();
+  Register VLen  = New64();
+
+  MachineBasicBlock *InitBB = MF.CreateMachineBasicBlock(MBB.getBasicBlock());
+  MachineBasicBlock *FastBB = MF.CreateMachineBasicBlock(MBB.getBasicBlock());
+  MachineBasicBlock *TailBB = MF.CreateMachineBasicBlock(MBB.getBasicBlock());
+  MachineBasicBlock *ExitBB = MF.CreateMachineBasicBlock(MBB.getBasicBlock());
+
+  MF.insert(++MBB.getIterator(), InitBB);
+  MF.insert(++InitBB->getIterator(), FastBB);
+  MF.insert(++FastBB->getIterator(), TailBB);
+  MF.insert(++TailBB->getIterator(), ExitBB);
+
+  ExitBB->splice(ExitBB->end(), &MBB, std::next(MBBI), MBB.end());
+  ExitBB->transferSuccessors(&MBB);
+
+  for (MachineBasicBlock *Succ : ExitBB->successors()) {
+    for (MachineInstr &PHI : Succ->phis()) {
+      for (unsigned i = 1; i < PHI.getNumOperands(); i += 2) {
+        if (PHI.getOperand(i + 1).getMBB() == &MBB)
+          PHI.getOperand(i + 1).setMBB(ExitBB);
+      }
+    }
+  }
+
+  MBB.addSuccessor(InitBB);
+  InitBB->addSuccessor(FastBB);
+  InitBB->addSuccessor(TailBB);
+  FastBB->addSuccessor(FastBB);
+  FastBB->addSuccessor(TailBB);
+  TailBB->addSuccessor(TailBB);
+  TailBB->addSuccessor(ExitBB);
+
+  auto B = [&](MachineBasicBlock *BB, unsigned Opc) {
+    return BuildMI(*BB, BB->end(), DL, TII->get(Opc));
+  };
+
+  /* -------- Init -------- */
+
+  B(InitBB, TargetOpcode::COPY).addDef(Dst0).addUse(DstReg);
+  B(InitBB, TargetOpcode::COPY).addDef(Src0).addUse(SrcReg);
+
+  B(InitBB, AArch64::PTRUE_B)
+      .addDef(Pred)
+      .addImm(AArch64SVEPredPattern::all);
+
+  B(InitBB, AArch64::CNTB_XPiI)
+      .addDef(VLen)
+      .addImm(AArch64SVEPredPattern::all)
+      .addImm(1);
+
+  B(InitBB, AArch64::UBFMXri)
+      .addDef(Loop0)
+      .addUse(SizeReg)
+      .addImm(3)
+      .addImm(63);
+
+  B(InitBB, AArch64::UDIVXr)
+      .addDef(Loop1)
+      .addUse(Loop0)
+      .addUse(VLen);
+
+  B(InitBB, AArch64::UBFMXri)
+      .addDef(Tail0)
+      .addUse(VLen)
+      .addImm(61)
+      .addImm(60);
+
+  B(InitBB, AArch64::MSUBXrrr)
+      .addDef(Tail1)
+      .addUse(Loop1)
+      .addUse(Tail0)
+      .addUse(SizeReg);
+
+  {
+    Register Loop1sp = New64sp();
+    B(InitBB, TargetOpcode::COPY).addDef(Loop1sp).addUse(Loop1);
+    B(InitBB, AArch64::SUBSXri)
+        .addDef(AArch64::XZR)
+        .addUse(Loop1sp)
+        .addImm(0)
+        .addImm(0);
+  }
+
+  B(InitBB, AArch64::Bcc)
+      .addImm(AArch64CC::EQ)
+      .addMBB(TailBB);
+
+  /* -------- Fast loop -------- */
+
+  unsigned LoadOpc  = IsNT ? AArch64::LDNT1B_ZRI : AArch64::LD1B_IMM;
+  unsigned StoreOpc = IsNT ? AArch64::STNT1B_ZRI : AArch64::ST1B_IMM;
+
+  Register DstCur  = New64sp();
+  Register SrcCur  = New64sp();
+  Register LoopCur = New64();
+
+  // Allocate placeholder registers for PHI back-edges so we never
+  // accidentally reference a stale virtual register from a prior expansion
+  Register DstNextPH  = New64sp();
+  Register SrcNextPH  = New64sp();
+  Register LoopNextPH = New64();
+
+  B(FastBB, TargetOpcode::PHI)
+      .addDef(DstCur)
+      .addUse(Dst0).addMBB(InitBB)
+      .addUse(DstNextPH).addMBB(FastBB);
+
+  B(FastBB, TargetOpcode::PHI)
+      .addDef(SrcCur)
+      .addUse(Src0).addMBB(InitBB)
+      .addUse(SrcNextPH).addMBB(FastBB);
+
+  B(FastBB, TargetOpcode::PHI)
+      .addDef(LoopCur)
+      .addUse(Loop1).addMBB(InitBB)
+      .addUse(LoopNextPH).addMBB(FastBB);
+
+  for (int i = 0; i < Unroll; ++i) {
+    B(FastBB, LoadOpc)
+        .addDef(Vecs[i])
+        .addUse(Pred)
+        .addUse(SrcCur)
+        .addImm(i);
+    B(FastBB, StoreOpc)
+        .addUse(Vecs[i])
+        .addUse(Pred)
+        .addUse(DstCur)
+        .addImm(i);
+  }
+
+  Register SrcNext = New64sp();
+  {
+    Register SrcCur64  = New64();
+    Register SrcNext64 = New64();
+    B(FastBB, TargetOpcode::COPY).addDef(SrcCur64).addUse(SrcCur);
+    B(FastBB, AArch64::INCB_XPiI)
+        .addDef(SrcNext64)
+        .addUse(SrcCur64)
+        .addImm(EffectiveVL)
+        .addImm(0);
+    B(FastBB, TargetOpcode::COPY).addDef(SrcNext).addUse(SrcNext64);
+  }
+
+  Register DstNext = New64sp();
+  {
+    Register DstCur64  = New64();
+    Register DstNext64 = New64();
+    B(FastBB, TargetOpcode::COPY).addDef(DstCur64).addUse(DstCur);
+    B(FastBB, AArch64::INCB_XPiI)
+        .addDef(DstNext64)
+        .addUse(DstCur64)
+        .addImm(EffectiveVL)
+        .addImm(0);
+    B(FastBB, TargetOpcode::COPY).addDef(DstNext).addUse(DstNext64);
+  }
+
+  // SUBSXri here both decrements and sets flags — result goes to LoopNext,
+  // not XZR, since the value is used as the PHI back-edge
+  Register LoopNext = New64();
+  {
+    Register LoopCursp = New64sp();
+    B(FastBB, TargetOpcode::COPY).addDef(LoopCursp).addUse(LoopCur);
+    B(FastBB, AArch64::SUBSXri)
+        .addDef(LoopNext)
+        .addUse(LoopCursp)
+        .addImm(1)
+        .addImm(0);
+  }
+
+  B(FastBB, AArch64::Bcc)
+      .addImm(AArch64CC::NE)
+      .addMBB(FastBB);
+
+  B(FastBB, AArch64::B).addMBB(TailBB);
+
+  // Fix FastBB PHI back-edges
+  {
+    auto PhiIt = FastBB->begin();
+    (*PhiIt++).getOperand(3).setReg(DstNext);
+    (*PhiIt++).getOperand(3).setReg(SrcNext);
+    (*PhiIt  ).getOperand(3).setReg(LoopNext);
+  }
+
+  /* -------- Tail loop -------- */
+
+  Register DstTailCur = New64sp();
+  Register SrcTailCur = New64sp();
+  Register TailCur    = New64();
+
+  // Allocate placeholder registers for TailBB PHI back-edges
+  Register DstTailNextPH = New64sp();
+  Register SrcTailNextPH = New64sp();
+  Register TailNextPH    = New64();
+
+  B(TailBB, TargetOpcode::PHI)
+      .addDef(DstTailCur)
+      .addUse(Dst0).addMBB(InitBB)
+      .addUse(DstNext).addMBB(FastBB)
+      .addUse(DstTailNextPH).addMBB(TailBB);
+
+  B(TailBB, TargetOpcode::PHI)
+      .addDef(SrcTailCur)
+      .addUse(Src0).addMBB(InitBB)
+      .addUse(SrcNext).addMBB(FastBB)
+      .addUse(SrcTailNextPH).addMBB(TailBB);
+
+  B(TailBB, TargetOpcode::PHI)
+      .addDef(TailCur)
+      .addUse(Tail1).addMBB(InitBB)
+      .addUse(Tail1).addMBB(FastBB)
+      .addUse(TailNextPH).addMBB(TailBB);
+
+  Register Pred2   = NewP();
+  Register VecTail = NewZ();
+
+  B(TailBB, AArch64::WHILELO_PXX_B)
+      .addDef(Pred2)
+      .addReg(AArch64::XZR)
+      .addUse(TailCur);
+
+  B(TailBB, LoadOpc)
+      .addDef(VecTail)
+      .addUse(Pred2)
+      .addUse(SrcTailCur)
+      .addImm(0);
+
+  B(TailBB, StoreOpc)
+      .addUse(VecTail)
+      .addUse(Pred2)
+      .addUse(DstTailCur)
+      .addImm(0);
+
+  Register SrcTailNext = New64sp();
+  {
+    Register SrcTailCur64  = New64();
+    Register SrcTailNext64 = New64();
+    B(TailBB, TargetOpcode::COPY).addDef(SrcTailCur64).addUse(SrcTailCur);
+    B(TailBB, AArch64::INCB_XPiI)
+        .addDef(SrcTailNext64)
+        .addUse(SrcTailCur64)
+        .addImm(AArch64SVEPredPattern::vl1)
+        .addImm(0);
+    B(TailBB, TargetOpcode::COPY).addDef(SrcTailNext).addUse(SrcTailNext64);
+  }
+
+  Register DstTailNext = New64sp();
+  {
+    Register DstTailCur64  = New64();
+    Register DstTailNext64 = New64();
+    B(TailBB, TargetOpcode::COPY).addDef(DstTailCur64).addUse(DstTailCur);
+    B(TailBB, AArch64::INCB_XPiI)
+        .addDef(DstTailNext64)
+        .addUse(DstTailCur64)
+        .addImm(AArch64SVEPredPattern::vl1)
+        .addImm(0);
+    B(TailBB, TargetOpcode::COPY).addDef(DstTailNext).addUse(DstTailNext64);
+  }
+
+  Register TailNext = New64();
+
+  B(TailBB, AArch64::DECB_XPiI)
+      .addDef(TailNext)
+      .addUse(TailCur)
+      .addImm(AArch64SVEPredPattern::vl1)
+      .addImm(0);
+
+  {
+    Register TailNextsp = New64sp();
+    B(TailBB, TargetOpcode::COPY).addDef(TailNextsp).addUse(TailNext);
+    B(TailBB, AArch64::SUBSXri)
+        .addDef(AArch64::XZR)
+        .addUse(TailNextsp)
+        .addImm(0)
+        .addImm(0);
+  }
+
+  B(TailBB, AArch64::Bcc)
+      .addImm(AArch64CC::GT)
+      .addMBB(TailBB);
+
+  B(TailBB, AArch64::B).addMBB(ExitBB);
+
+  // Fix TailBB PHI back-edges
+  {
+    auto PhiIt = TailBB->begin();
+    (*PhiIt++).getOperand(5).setReg(DstTailNext);
+    (*PhiIt++).getOperand(5).setReg(SrcTailNext);
+    (*PhiIt  ).getOperand(5).setReg(TailNext);
+  }
 
   MI.eraseFromParent();
 

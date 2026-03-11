@@ -339,7 +339,6 @@ bool AArch64ExpandPseudo::expandMOPSSVE2CompatCopy(
     MachineBasicBlock::iterator MBBI,
     MachineBasicBlock::iterator &NextMBBI) {
 
-llvm::errs() << "Expanding Memcpy OLD\n";
   MachineInstr &MI = *MBBI;
   unsigned Opcode = MI.getOpcode();
   DebugLoc DL = MI.getDebugLoc();
@@ -1670,11 +1669,11 @@ bool AArch64ExpandPseudo::expandMI(MachineBasicBlock &MBB,
   default:
     break;
 
-  case AArch64::SVE2MemoryCopyPseudo:
-  case AArch64::SVE2MemoryCopyNTPseudo:
-  case AArch64::SVE2MemoryMovePseudo:
-  case AArch64::SVE2MemoryMoveNTPseudo:
-    return expandMOPSSVE2CompatCopy(MBB, MBBI, NextMBBI);
+  // case AArch64::SVE2MemoryCopyPseudo:
+  // case AArch64::SVE2MemoryCopyNTPseudo:
+  // case AArch64::SVE2MemoryMovePseudo:
+  // case AArch64::SVE2MemoryMoveNTPseudo:
+  //   return expandMOPSSVE2CompatCopy(MBB, MBBI, NextMBBI);
 
   // case AArch64::SVE2MemorySetPseudo:
   // case AArch64::SVE2MemorySetNTPseudo:

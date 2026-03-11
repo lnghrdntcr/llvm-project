@@ -10520,7 +10520,7 @@ let Predicates = [HasMOPS] in {
             (MOPSMemorySetNTPseudo $dst, $size, $val)>;
 }
 let Predicates = [HasSVE2], Defs = [NZCV], Size = 12, mayStore = 1 in {
-  let mayLoad = 1, Defs = [X14, X15, X16, X17, X18, P0, Z0, Z1, Z2, Z3, Z4, Z5, Z6, Z7] in {
+  let mayLoad = 1 in {
     def SVE2MemoryCopyPseudo : Pseudo<(outs GPR64common:$Rd_wb, GPR64common:$Rs_wb, GPR64:$Rn_wb),
                                       (ins GPR64common:$Rd, GPR64common:$Rs, GPR64:$Rn),
                                       [], "$Rd = $Rd_wb,$Rs = $Rs_wb,$Rn = $Rn_wb">, Sched<[]>;
